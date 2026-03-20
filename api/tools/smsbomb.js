@@ -9,7 +9,7 @@ module.exports = {
     version: "1.0.0",
     category: "tools",
     method: "GET",
-    path: "/smsbomber"
+    path: "/smsbomber?Number=&amount="
   },
   
   onStart: async function({ req, res }) {
@@ -178,9 +178,9 @@ module.exports = {
           sms_per_second: (smsCount / duration).toFixed(2)
         },
         errors: errors.length > 0 ? errors.slice(0, 10) : undefined,
-        author: "Kenneth Panio",
+        author: "Jaybohol",
         timestamp: new Date().toISOString(),
-        disclaimer: "This tool is for authorized testing only. Unauthorized SMS bombing may be illegal."
+        disclaimer: "This tool is for authorized testing only."
       });
       
     } catch (error) {
