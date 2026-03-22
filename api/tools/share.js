@@ -11,13 +11,14 @@ module.exports = {
     author: "Jaybohol",
     version: "1.0.0",
     category: "tools",
-    method: "POST",
-    path: "/facebook/share"
+    method: "GET",
+    path: "/facebook/share?cookie=&url=&amount=&interval="
   },
   
   onStart: async function({ req, res }) {
     try {
-      const { cookie, url, amount, interval } = req.body;
+      // Get parameters from query string (GET method)
+      const { cookie, url, amount, interval } = req.query;
       
       // Validate required fields
       if (!cookie) {
@@ -26,18 +27,12 @@ module.exports = {
           operator: "Jaybohol",
           error: "Cookie is required",
           usage: {
-            method: "POST",
-            body: {
+            example: "/facebook/share?cookie=yourcookie&url=fblink&amount=50&interval=1",
+            parameters: {
               cookie: "Facebook session cookie string",
               url: "Facebook post URL to share",
               amount: "Number of shares (1-100)",
               interval: "Seconds between shares (5-60)"
-            },
-            example: {
-              cookie: "sb=xxxx; datr=xxxx; c_user=xxxx; xs=xxxx",
-              url: "https://www.facebook.com/username/posts/123456789",
-              amount: 10,
-              interval: 10
             }
           }
         });
@@ -47,7 +42,8 @@ module.exports = {
         return res.status(400).json({
           status: false,
           operator: "Jaybohol",
-          error: "Post URL is required"
+          error: "Post URL is required",
+          example: "/facebook/share?cookie=yourcookie&url=https://www.facebook.com/post/123&amount=50&interval=1"
         });
       }
       
@@ -55,7 +51,8 @@ module.exports = {
         return res.status(400).json({
           status: false,
           operator: "Jaybohol",
-          error: "Amount is required"
+          error: "Amount is required",
+          example: "/facebook/share?cookie=yourcookie&url=fblink&amount=50&interval=1"
         });
       }
       
@@ -63,7 +60,8 @@ module.exports = {
         return res.status(400).json({
           status: false,
           operator: "Jaybohol",
-          error: "Interval is required"
+          error: "Interval is required",
+          example: "/facebook/share?cookie=yourcookie&url=fblink&amount=50&interval=1"
         });
       }
       
@@ -135,107 +133,10 @@ module.exports = {
         error: error.message || "Internal server error"
       });
     }
-  },
-  
-  // Get session status
-  status: async function({ req, res }) {
-    try {
-      const { session_id } = req.query;
-      
-      if (!session_id) {
-        const allSessions = Array.from(sessions.values()).map((s, index) => ({
-          session: index + 1,
-          url: s.url,
-          count: s.count,
-          target: s.target,
-          interval: s.interval,
-          error: s.error || null,
-          logs: (s.logs || []).slice(-10),
-          running: s.running
-        }));
-        
-        return res.json({
-          status: true,
-          active_sessions: sessions.size,
-          sessions: allSessions
-        });
-      }
-      
-      const session = sessions.get(session_id);
-      if (!session) {
-        return res.status(404).json({
-          status: false,
-          error: "Session not found"
-        });
-      }
-      
-      res.json({
-        status: true,
-        session: {
-          id: session_id,
-          url: session.url,
-          post_id: session.id,
-          count: session.count,
-          target: session.target,
-          interval: session.interval,
-          error: session.error,
-          logs: (session.logs || []).slice(-20),
-          running: session.running,
-          start_time: session.startTime,
-          elapsed_seconds: session.startTime ? Math.floor((Date.now() - session.startTime) / 1000) : null
-        }
-      });
-      
-    } catch (error) {
-      res.status(500).json({
-        status: false,
-        error: error.message
-      });
-    }
-  },
-  
-  // Stop session
-  stop: async function({ req, res }) {
-    try {
-      const { session_id } = req.body;
-      
-      if (!session_id) {
-        return res.status(400).json({
-          status: false,
-          error: "Session ID required"
-        });
-      }
-      
-      const session = sessions.get(session_id);
-      if (!session) {
-        return res.status(404).json({
-          status: false,
-          error: "Session not found"
-        });
-      }
-      
-      if (session.stop) {
-        session.stop();
-      }
-      
-      res.json({
-        status: true,
-        message: "Session stopped",
-        session_id: session_id,
-        shares_completed: session.count,
-        target: session.target
-      });
-      
-    } catch (error) {
-      res.status(500).json({
-        status: false,
-        error: error.message
-      });
-    }
   }
 };
 
-// Helper Functions
+// ============= HELPER FUNCTIONS =============
 
 function startSharing(cookie, url, postId, accessToken, amount, interval) {
   const sessionId = crypto.randomBytes(8).toString('hex');
