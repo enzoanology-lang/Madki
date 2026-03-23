@@ -1,4 +1,4 @@
-// file: api/ai/tsundere.js
+// api/ai/tsundere.js
 
 const axios = require("axios");
 const crypto = require("crypto");
@@ -23,48 +23,33 @@ module.exports = {
           success: false,
           author: "Jaybohol",
           message: "Parameter 'text' wajib diisi.",
-          usage: "/api/ai/tsundere?text=Bukannya%20aku%20menyukaimu%20ya,%20dasar%20baka!"
+          usage: "/api/ai/tsundere?text=Hello%20World"
         });
       }
       
-      // Validate text length
-      if (text.length > 500) {
-        return res.status(413).json({
-          success: false,
-          author: "Jaybohol",
-          message: "Text too long. Maximum 500 characters."
-        });
-      }
-      
-      // Parse parameters
-      let parsedSpeed = parseFloat(speed);
-      if (isNaN(parsedSpeed) || parsedSpeed < 0.5 || parsedSpeed > 2.0) parsedSpeed = 1.1;
-      
-      let parsedPitch = parseFloat(pitch);
-      if (isNaN(parsedPitch) || parsedPitch < 0.5 || parsedPitch > 5.0) parsedPitch = 2.5;
-      
-      const selectedVoice = voice || "Kore";
-      const selectedLanguage = language || "id-ID";
-      
-      console.log(`🎙️ Generating Tsundere TTS: "${text.substring(0, 50)}..."`);
+      console.log(`🎙️ Generating Tsundere TTS for: "${text.substring(0, 50)}..."`);
       
       // Generate TTS audio
-      const audioBuffer = await generateTsundereTTS(text, selectedVoice, selectedLanguage, parsedSpeed, parsedPitch);
+      const audioBuffer = await generateTsundereTTS(text, voice, language, parseFloat(speed), parseFloat(pitch));
       
       // Generate unique ID for the audio
       const audioId = generateAudioId(text);
       
       // Initialize cache if not exists
-      if (!global.audioCache) global.audioCache = new Map();
+      if (!global.audioCache) {
+        global.audioCache = new Map();
+        console.log("📦 Created new audio cache");
+      }
       
       // Store audio in cache
       global.audioCache.set(audioId, audioBuffer);
+      console.log(`💾 Stored audio with ID: ${audioId}`);
       
       // Clean up after 5 minutes
       setTimeout(() => {
         if (global.audioCache && global.audioCache.has(audioId)) {
           global.audioCache.delete(audioId);
-          console.log(`🗑️ Audio ${audioId} removed from cache`);
+          console.log(`🗑️ Removed audio ${audioId} from cache`);
         }
       }, 5 * 60 * 1000);
       
@@ -116,11 +101,11 @@ async function generateTsundereTTS(text, voice, language, speed, pitch) {
   const payload = {
     "input": text,
     "model": "gemini-2.5-flash-tts",
-    "voice": voice,
-    "language_code": language,
+    "voice": voice || "Kore",
+    "language_code": language || "id-ID",
     "response_format": "mp3",
-    "speaking_rate": speed,
-    "pitch": pitch,
+    "speaking_rate": speed || 1.1,
+    "pitch": pitch || 2.5,
     "volume_gain_db": 0
   };
   
@@ -149,9 +134,10 @@ async function generateTsundereTTS(text, voice, language, speed, pitch) {
     const audioBuffer = Buffer.from(response.data);
     
     if (audioBuffer.length < 1000) {
-      throw new Error("Generated audio is too small, possibly invalid");
+      throw new Error(`Generated audio too small: ${audioBuffer.length} bytes`);
     }
     
+    console.log(`✅ Audio generated: ${audioBuffer.length} bytes`);
     return audioBuffer;
   } catch (error) {
     console.error("Tsundere TTS API Error:", error.message);
