@@ -15,9 +15,8 @@ module.exports = {
   onStart: async function({ req, res }) {
     try {
       // Get the audio ID from URL parameter
-      // In Express, this would be req.params.id
-      // In your API structure, the ID might be in req.query or req.params
-      const id = req.params?.id || req.query?.id;
+      // The ID comes from the URL like /api/media/abc123:def456
+      const id = req.params.id;
       
       console.log(`🔊 Audio request for ID: ${id}`);
       
@@ -26,7 +25,8 @@ module.exports = {
         console.log("❌ No audio cache found");
         return res.status(404).json({
           success: false,
-          error: "No audio cache found. Please generate TTS first."
+          error: "No audio cache found. Please generate TTS first.",
+          message: "Generate TTS at: /api/ai/tsundere?text=yourtext"
         });
       }
       
@@ -49,12 +49,14 @@ module.exports = {
       res.setHeader('Content-Disposition', 'inline; filename="tsundere-audio.mp3"');
       res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
       res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
       
       // Send the audio buffer
       return res.send(audioBuffer);
       
     } catch (error) {
       console.error("Media Error:", error.message);
+      console.error(error.stack);
       
       res.status(500).json({
         success: false,
