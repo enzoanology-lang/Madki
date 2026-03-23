@@ -1,10 +1,12 @@
+// file: api/ai/tsundere.js
+
 const axios = require("axios");
 const crypto = require("crypto");
 
 module.exports = {
   meta: {
     name: "Tsundere Text-to-Speech",
-    description: "AI Voice with Tsundere style - converts text to speech with tsundere tone (cute/playful)",
+    description: "AI Voice with Tsundere style - converts text to speech with tsundere tone",
     author: "Jaybohol",
     version: "1.0.0",
     category: "ai",
@@ -14,32 +16,14 @@ module.exports = {
   
   onStart: async function({ req, res }) {
     try {
-      // Support both POST and GET
-      let text;
-      
-      if (req.method === 'POST') {
-        // POST: get from body
-        text = req.body?.text;
-      } else {
-        // GET: get from query parameters
-        text = req.query?.text;
-      }
-      
-      const { voice = "Kore", language = "id-ID", speed = 1.1, pitch = 2.5 } = req.body || req.query;
+      const { text, voice = "Kore", language = "id-ID", speed = 1.1, pitch = 2.5 } = req.query;
       
       if (!text) {
         return res.status(400).json({
           success: false,
           author: "Jaybohol",
           message: "Parameter 'text' wajib diisi.",
-          usage: {
-            GET: "/api/ai/tsundere?text=Bukannya%20aku%20menyukaimu%20ya,%20dasar%20baka!",
-            POST: {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: { "text": "Bukannya aku menyukaimu ya, dasar baka!" }
-            }
-          }
+          usage: "/api/ai/tsundere?text=Bukannya%20aku%20menyukaimu%20ya,%20dasar%20baka!"
         });
       }
       
@@ -70,18 +54,26 @@ module.exports = {
       // Generate unique ID for the audio
       const audioId = generateAudioId(text);
       
-      // Store audio temporarily
+      // Initialize cache if not exists
       if (!global.audioCache) global.audioCache = new Map();
+      
+      // Store audio in cache
       global.audioCache.set(audioId, audioBuffer);
       
       // Clean up after 5 minutes
       setTimeout(() => {
-        global.audioCache.delete(audioId);
+        if (global.audioCache && global.audioCache.has(audioId)) {
+          global.audioCache.delete(audioId);
+          console.log(`🗑️ Audio ${audioId} removed from cache`);
+        }
       }, 5 * 60 * 1000);
       
       // Get the domain from the request
-      const domain = `${req.protocol}://${req.get('host')}`;
-      const audioUrl = `${domain}/api/media/${audioId}`;
+      const protocol = req.headers['x-forwarded-proto'] || req.protocol || 'https';
+      const host = req.get('host');
+      const audioUrl = `${protocol}://${host}/api/media/${audioId}`;
+      
+      console.log(`✅ Audio URL: ${audioUrl}`);
       
       res.json({
         success: true,
@@ -114,7 +106,7 @@ function generateAudioId(text) {
   const timestamp = Date.now();
   const random = crypto.randomBytes(16).toString('hex');
   const hash = crypto.createHash('sha256').update(`${text}${timestamp}`).digest('hex');
-  return `${hash.substring(0, 32)}:${random}`;
+  return `${hash.substring(0, 32)}:${random.substring(0, 32)}`;
 }
 
 async function generateTsundereTTS(text, voice, language, speed, pitch) {
@@ -165,7 +157,7 @@ async function generateTsundereTTS(text, voice, language, speed, pitch) {
     console.error("Tsundere TTS API Error:", error.message);
     
     if (error.response) {
-      throw new Error(`TTS Error: ${error.response.status}`);
+      throw new Error(`TTS API Error: ${error.response.status}`);
     }
     throw new Error(error.message || 'Failed to generate Tsundere TTS');
   }
