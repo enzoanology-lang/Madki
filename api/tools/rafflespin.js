@@ -8,9 +8,33 @@ const RAFFLE_FILE = path.join(__dirname, '../data/raffle_entries.json');
 const SPIN_HISTORY_FILE = path.join(__dirname, '../data/spin_history.json');
 const DATA_DIR = path.join(__dirname, '../data');
 
+// Admin API key (only this key can perform spin)
+const ADMIN_API_KEY = "selovasx2024";
+
 // Ensure data directory exists
 if (!fs.existsSync(DATA_DIR)) {
   fs.mkdirSync(DATA_DIR, { recursive: true });
+}
+
+// Mask phone number (show only first 2 and last 2 digits)
+function maskPhoneNumber(number) {
+  if (!number) return "N/A";
+  const str = number.toString();
+  if (str.length <= 4) return "•••••••••";
+  const firstTwo = str.substring(0, 2);
+  const lastTwo = str.substring(str.length - 2);
+  const middleLength = str.length - 4;
+  const masked = firstTwo + "•".repeat(middleLength) + lastTwo;
+  return masked;
+}
+
+// Mask GCash name (show only first letter and last letter)
+function maskGcashName(name) {
+  if (!name) return "N/A";
+  if (name.length <= 2) return name[0] + "•";
+  const first = name[0];
+  const last = name[name.length - 1];
+  return first + "•••" + last;
 }
 
 // Load raffle entries
@@ -65,9 +89,12 @@ module.exports = {
   
   onStart: async function({ req, res }) {
     try {
-      const { action, name, gcashnumber, gcashname, reset } = req.query;
+      const { action, name, gcashnumber, gcashname, reset, apikey } = req.query;
       
-      // Handle join raffle
+      // Check if admin (has valid API key)
+      const isAdmin = (apikey === ADMIN_API_KEY);
+      
+      // Handle join raffle (no API key required)
       if (action === 'join') {
         if (!name) {
           return res.status(400).json({
@@ -133,15 +160,16 @@ module.exports = {
           message: "✅ Successfully joined the raffle!",
           entry: {
             name: newEntry.name,
-            gcash_number: newEntry.gcashnumber,
-            gcash_name: newEntry.gcashname,
+            gcash_number: maskPhoneNumber(newEntry.gcashnumber),
+            gcash_name: maskGcashName(newEntry.gcashname),
             entry_number: entries.length
           },
-          total_participants: entries.length
+          total_participants: entries.length,
+          note: "Your number is hidden from public view. Only admins can see full details."
         });
       }
       
-      // Handle list participants
+      // Handle list participants (no API key required for public view)
       if (action === 'list') {
         const entries = loadEntries();
         
@@ -154,21 +182,48 @@ module.exports = {
           });
         }
         
-        return res.json({
-          status: true,
-          total_participants: entries.length,
-          participants: entries.map((entry, index) => ({
+        // Create masked entries for public view
+        const maskedParticipants = entries.map((entry, index) => ({
+          number: index + 1,
+          name: entry.name,
+          gcash_number: maskPhoneNumber(entry.gcashnumber),
+          gcash_name: maskGcashName(entry.gcashname),
+          joined_at: entry.timestamp
+        }));
+        
+        // If admin, also provide full details
+        let fullParticipants = null;
+        if (isAdmin) {
+          fullParticipants = entries.map((entry, index) => ({
             number: index + 1,
+            id: entry.id,
             name: entry.name,
             gcash_number: entry.gcashnumber,
             gcash_name: entry.gcashname,
             joined_at: entry.timestamp
-          }))
+          }));
+        }
+        
+        return res.json({
+          status: true,
+          message: isAdmin ? "Participants retrieved (Admin View - Full Details)" : "Participants retrieved (Public View - Masked)",
+          is_admin: isAdmin,
+          total_participants: entries.length,
+          participants: maskedParticipants,
+          ...(isAdmin && { full_participants: fullParticipants, admin_note: "Use apikey=selovasx2024 to see full numbers" })
         });
       }
       
-      // Handle reset (clear all participants)
+      // Handle reset (clear all participants) - admin only
       if (action === 'reset' && reset === 'true') {
+        if (!isAdmin) {
+          return res.status(403).json({
+            status: false,
+            error: "Unauthorized. Only admin can reset the raffle.",
+            message: "Please provide valid apikey to reset."
+          });
+        }
+        
         saveEntries([]);
         
         return res.json({
@@ -177,8 +232,27 @@ module.exports = {
         });
       }
       
-      // Handle spin - pick ONE random winner
+      // Handle spin - pick ONE random winner (API KEY REQUIRED)
       if (action === 'spin') {
+        // Check if API key is provided
+        if (!apikey) {
+          return res.status(401).json({
+            status: false,
+            error: "API key is required to spin",
+            message: "Please provide apikey= to spin the raffle.",
+            usage: "/spin?action=spin&apikey="
+          });
+        }
+        
+        // Validate API key
+        if (apikey !== ADMIN_API_KEY) {
+          return res.status(403).json({
+            status: false,
+            error: "Invalid API key",
+            message: "The provided API key is not valid."
+          });
+        }
+        
         const entries = loadEntries();
         
         if (entries.length === 0) {
@@ -189,14 +263,20 @@ module.exports = {
           });
         }
         
-        // Check if spin already done
+        // Check if spin already done today
         const spinHistory = loadSpinHistory();
         if (spinHistory.last_winner && spinHistory.last_winner.date === new Date().toISOString().split('T')[0]) {
+          const winner = spinHistory.last_winner.winner;
           return res.json({
             status: false,
             error: "Spin already done today!",
             message: "The winner has already been selected for today.",
-            winner: spinHistory.last_winner
+            winner: {
+              name: winner.name,
+              gcash_number: maskPhoneNumber(winner.gcashnumber),
+              gcash_name: maskGcashName(winner.gcashname),
+              prize: "₱50 GCash"
+            }
           });
         }
         
@@ -221,6 +301,8 @@ module.exports = {
         if (spinHistory.winners) {
           spinHistory.winners.unshift({
             name: winner.name,
+            gcash_number: winner.gcashnumber,
+            gcash_name: winner.gcashname,
             prize: "₱50 GCash",
             amount: 50,
             date: spinResult.timestamp,
@@ -229,6 +311,8 @@ module.exports = {
         } else {
           spinHistory.winners = [{
             name: winner.name,
+            gcash_number: winner.gcashnumber,
+            gcash_name: winner.gcashname,
             prize: "₱50 GCash",
             amount: 50,
             date: spinResult.timestamp,
@@ -280,24 +364,31 @@ module.exports = {
         });
       }
       
-      // Handle winner check
+      // Handle winner check (no API key required for public view)
       if (action === 'winner') {
         const spinHistory = loadSpinHistory();
         
         if (!spinHistory.last_winner) {
           return res.json({
             status: true,
-            message: "No spin has been done yet. Use /spin?action=spin to pick a winner!"
+            message: "No spin has been done yet. Use /spin?action=spin&apikey=selovasx2024 to pick a winner!"
           });
         }
         
+        const winner = spinHistory.last_winner.winner;
+        
         return res.json({
           status: true,
-          winner: spinHistory.last_winner.winner,
-          winner_number: spinHistory.last_winner.winner_number,
-          prize: "₱50 GCash",
+          winner: {
+            name: winner.name,
+            gcash_number: isAdmin ? winner.gcashnumber : maskPhoneNumber(winner.gcashnumber),
+            gcash_name: isAdmin ? winner.gcashname : maskGcashName(winner.gcashname),
+            prize: "₱50 GCash",
+            entry_number: spinHistory.last_winner.winner_number
+          },
           date: spinHistory.last_winner.date,
-          total_participants: spinHistory.last_winner.total_participants
+          total_participants: spinHistory.last_winner.total_participants,
+          is_admin: isAdmin
         });
       }
       
@@ -307,12 +398,15 @@ module.exports = {
         message: "🎰 RAFFLE SPIN SYSTEM 🎰",
         available_actions: {
           join: "/spin?action=join&name=YourName&gcashnumber=09916527333&gcashname=YourGCashName",
-          list: "/spin?action=list",
-          spin: "/spin?action=spin",
+          list_public: "/spin?action=list",
+          list_admin: "/spin?action=list&apikey=",
+          spin: "/spin?action=spin&apikey=",
           winner: "/spin?action=winner",
-          reset: "/spin?action=reset&reset=true"
+          winner_admin: "/spin?action=winner&apikey=",
+          reset: "/spin?action=reset&reset=true&apikey="
         },
-        current_participants: loadEntries().length
+        current_participants: loadEntries().length,
+        note: "API key required for spin action. Use apikey=selovasx2024"
       });
       
     } catch (error) {
