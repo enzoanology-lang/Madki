@@ -7,9 +7,33 @@ const path = require('path');
 const RAFFLE_FILE = path.join(__dirname, '../data/raffle_entries.json');
 const DATA_DIR = path.join(__dirname, '../data');
 
+// Admin API key (only this key can see full numbers)
+const ADMIN_API_KEY = "selovasx2024";
+
 // Ensure data directory exists
 if (!fs.existsSync(DATA_DIR)) {
   fs.mkdirSync(DATA_DIR, { recursive: true });
+}
+
+// Mask phone number (show only first 2 and last 2 digits)
+function maskPhoneNumber(number) {
+  if (!number) return "N/A";
+  const str = number.toString();
+  if (str.length <= 4) return "•••••••••";
+  const firstTwo = str.substring(0, 2);
+  const lastTwo = str.substring(str.length - 2);
+  const middleLength = str.length - 4;
+  const masked = firstTwo + "•".repeat(middleLength) + lastTwo;
+  return masked;
+}
+
+// Mask GCash name (show only first letter and last letter)
+function maskGcashName(name) {
+  if (!name) return "N/A";
+  if (name.length <= 2) return name[0] + "•";
+  const first = name[0];
+  const last = name[name.length - 1];
+  return first + "•••" + last;
 }
 
 // Load existing entries
@@ -38,7 +62,7 @@ function generateId() {
 module.exports = {
   meta: {
     name: "Raffle System",
-    description: "Register for raffle, view entries, and remove entries",
+    description: "Register for raffle, view entries (masked for public, full for admin)",
     author: "Jaybohol",
     version: "1.0.0",
     category: "tools",
@@ -48,7 +72,10 @@ module.exports = {
   
   onStart: async function({ req, res }) {
     try {
-      const { name, gcashnumber, gcashname, action, remove } = req.query;
+      const { name, gcashnumber, gcashname, action, remove, apikey } = req.query;
+      
+      // Check if admin (has valid API key)
+      const isAdmin = (apikey === ADMIN_API_KEY);
       
       // Handle list command
       if (action === 'list' || req.query.list === 'true') {
@@ -61,9 +88,34 @@ module.exports = {
         const today = new Date().toISOString().split('T')[0];
         const todayEntries = entries.filter(e => e.date === today);
         
+        // Create masked entries for public view
+        const maskedEntries = entries.map((entry, index) => ({
+          number: index + 1,
+          name: entry.name,
+          gcash_number: maskPhoneNumber(entry.gcashnumber),
+          gcash_name: maskGcashName(entry.gcashname),
+          registered_at: entry.timestamp,
+          date: entry.date
+        }));
+        
+        // If admin, also provide full details
+        let fullEntries = null;
+        if (isAdmin) {
+          fullEntries = entries.map((entry, index) => ({
+            number: index + 1,
+            id: entry.id,
+            name: entry.name,
+            gcash_number: entry.gcashnumber,
+            gcash_name: entry.gcashname,
+            registered_at: entry.timestamp,
+            date: entry.date
+          }));
+        }
+        
         return res.json({
           status: true,
-          message: "Raffle entries retrieved successfully",
+          message: isAdmin ? "Raffle entries retrieved (Admin View - Full Details)" : "Raffle entries retrieved (Public View - Masked)",
+          is_admin: isAdmin,
           stats: {
             total_entries: totalEntries,
             total_participants: totalEntries,
@@ -72,19 +124,12 @@ module.exports = {
             entries_today: todayEntries.length,
             last_updated: new Date().toISOString()
           },
-          entries: entries.map((entry, index) => ({
-            id: entry.id,
-            number: index + 1,
-            name: entry.name,
-            gcash_number: entry.gcashnumber,
-            gcash_name: entry.gcashname,
-            registered_at: entry.timestamp,
-            date: entry.date
-          }))
+          entries: maskedEntries,
+          ...(isAdmin && { full_entries: fullEntries, admin_note: "Use apikey=selovasx2024 to see full numbers" })
         });
       }
       
-      // Handle REMOVE by entry number
+      // Handle REMOVE by entry number (no API key required)
       if (remove) {
         const entryNumber = parseInt(remove);
         
@@ -114,7 +159,7 @@ module.exports = {
           });
         }
         
-        // Get the entry to remove (array index = entryNumber - 1)
+        // Get the entry to remove
         const removedEntry = entries[entryNumber - 1];
         
         // Remove the entry
@@ -127,8 +172,8 @@ module.exports = {
           removed_entry: {
             number: entryNumber,
             name: removedEntry.name,
-            gcash_number: removedEntry.gcashnumber,
-            gcash_name: removedEntry.gcashname,
+            gcash_number: maskPhoneNumber(removedEntry.gcashnumber),
+            gcash_name: maskGcashName(removedEntry.gcashname),
             registered_at: removedEntry.timestamp
           },
           remaining_entries: entries.length,
@@ -143,9 +188,9 @@ module.exports = {
           error: "Name is required",
           usage: {
             register: "/raffle?name=Jay Kizuu&gcashnumber=09916527333&gcashname=J...B",
-            list: "/raffle?action=list",
-            remove: "/raffle?remove=7",
-            check: "/raffle?action=check&name=Jay Kizuu"
+            list_public: "/raffle?action=list",
+            list_admin: "/raffle?action=list&apikey=",
+            remove: "/raffle?remove=7"
           }
         });
       }
@@ -214,12 +259,13 @@ module.exports = {
           id: newEntry.id,
           number: entryNumber,
           name: newEntry.name,
-          gcash_number: newEntry.gcashnumber,
-          gcash_name: newEntry.gcashname,
+          gcash_number: maskPhoneNumber(newEntry.gcashnumber),
+          gcash_name: maskGcashName(newEntry.gcashname),
           registered_at: newEntry.timestamp
         },
         next_steps: "Keep your entry number. Winners will be announced on the raffle date.",
-        total_entries: entries.length
+        total_entries: entries.length,
+        note: "Your number is hidden from public view. Only admins can see full details."
       });
       
     } catch (error) {
