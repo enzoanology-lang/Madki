@@ -8,15 +8,20 @@ const RAFFLE_FILE = path.join(__dirname, '../data/raffle_entries.json');
 const SPIN_HISTORY_FILE = path.join(__dirname, '../data/spin_history.json');
 const DATA_DIR = path.join(__dirname, '../data');
 
-// Admin API key (only this key can perform spin)
+// Admin API key
 const ADMIN_API_KEY = "selovasx2024";
+
+// Prize settings
+const TOTAL_PRIZE = 200;
+const PRIZE_PER_WINNER = 50;
+const TOTAL_WINNERS = 4;
 
 // Ensure data directory exists
 if (!fs.existsSync(DATA_DIR)) {
   fs.mkdirSync(DATA_DIR, { recursive: true });
 }
 
-// Mask phone number (show only first 2 and last 2 digits)
+// Mask phone number
 function maskPhoneNumber(number) {
   if (!number) return "N/A";
   const str = number.toString();
@@ -28,7 +33,7 @@ function maskPhoneNumber(number) {
   return masked;
 }
 
-// Mask GCash name (show only first letter and last letter)
+// Mask GCash name
 function maskGcashName(name) {
   if (!name) return "N/A";
   if (name.length <= 2) return name[0] + "•";
@@ -57,12 +62,12 @@ function saveEntries(entries) {
 // Load spin history
 function loadSpinHistory() {
   if (!fs.existsSync(SPIN_HISTORY_FILE)) {
-    return { spins: [], winners: [] };
+    return { spins: [], winners: [], last_spin_index: 0 };
   }
   try {
     return JSON.parse(fs.readFileSync(SPIN_HISTORY_FILE, 'utf8'));
   } catch (e) {
-    return { spins: [], winners: [] };
+    return { spins: [], winners: [], last_spin_index: 0 };
   }
 }
 
@@ -79,9 +84,9 @@ function generateId() {
 module.exports = {
   meta: {
     name: "Raffle Spin",
-    description: "Spin to randomly pick ONE winner from all participants",
+    description: "Spin 4 times to pick 4 winners (₱50 each)",
     author: "Jaybohol",
-    version: "1.0.0",
+    version: "2.0.0",
     category: "game",
     method: "GET",
     path: "/spin?action="
@@ -91,10 +96,9 @@ module.exports = {
     try {
       const { action, name, gcashnumber, gcashname, reset, apikey } = req.query;
       
-      // Check if admin (has valid API key)
       const isAdmin = (apikey === ADMIN_API_KEY);
       
-      // Handle join raffle (no API key required)
+      // Handle join raffle
       if (action === 'join') {
         if (!name) {
           return res.status(400).json({
@@ -118,7 +122,6 @@ module.exports = {
           });
         }
         
-        // Validate GCash number
         const cleanNumber = gcashnumber.toString().replace(/[\s\-+]/g, '');
         const isValidNumber = /^09\d{9}$/.test(cleanNumber) || /^639\d{9}$/.test(cleanNumber);
         
@@ -130,8 +133,6 @@ module.exports = {
         }
         
         const entries = loadEntries();
-        
-        // Check for duplicate
         const existingEntry = entries.find(e => e.name.toLowerCase() === name.toLowerCase());
         
         if (existingEntry) {
@@ -142,7 +143,6 @@ module.exports = {
           });
         }
         
-        // Create new entry
         const newEntry = {
           id: generateId(),
           name: name.trim(),
@@ -165,11 +165,11 @@ module.exports = {
             entry_number: entries.length
           },
           total_participants: entries.length,
-          note: "Your number is hidden from public view. Only admins can see full details."
+          note: "4 winners will be selected. Each wins ₱50 GCash!"
         });
       }
       
-      // Handle list participants (no API key required for public view)
+      // Handle list participants
       if (action === 'list') {
         const entries = loadEntries();
         
@@ -182,7 +182,6 @@ module.exports = {
           });
         }
         
-        // Create masked entries for public view
         const maskedParticipants = entries.map((entry, index) => ({
           number: index + 1,
           name: entry.name,
@@ -191,7 +190,6 @@ module.exports = {
           joined_at: entry.timestamp
         }));
         
-        // If admin, also provide full details
         let fullParticipants = null;
         if (isAdmin) {
           fullParticipants = entries.map((entry, index) => ({
@@ -204,52 +202,59 @@ module.exports = {
           }));
         }
         
+        // Get spin status
+        const spinHistory = loadSpinHistory();
+        const winnersCount = spinHistory.winners.length;
+        
         return res.json({
           status: true,
-          message: isAdmin ? "Participants retrieved (Admin View - Full Details)" : "Participants retrieved (Public View - Masked)",
+          message: isAdmin ? "Participants retrieved (Admin View)" : "Participants retrieved (Public View)",
           is_admin: isAdmin,
           total_participants: entries.length,
+          spin_status: {
+            total_winners: TOTAL_WINNERS,
+            winners_found: winnersCount,
+            remaining_winners: TOTAL_WINNERS - winnersCount,
+            prize_per_winner: `₱${PRIZE_PER_WINNER}`,
+            total_prize: `₱${TOTAL_PRIZE}`
+          },
           participants: maskedParticipants,
-          ...(isAdmin && { full_participants: fullParticipants, admin_note: "Use apikey=selovasx2024 to see full numbers" })
+          ...(isAdmin && { full_participants: fullParticipants })
         });
       }
       
-      // Handle reset (clear all participants) - admin only
+      // Handle reset (clear all participants and spin history) - admin only
       if (action === 'reset' && reset === 'true') {
         if (!isAdmin) {
           return res.status(403).json({
             status: false,
-            error: "Unauthorized. Only admin can reset the raffle.",
-            message: "Please provide valid apikey to reset."
+            error: "Unauthorized. Only admin can reset."
           });
         }
         
         saveEntries([]);
+        saveSpinHistory({ spins: [], winners: [], last_spin_index: 0 });
         
         return res.json({
           status: true,
-          message: "Raffle has been reset. All participants cleared."
+          message: "Raffle has been reset. All participants and winners cleared."
         });
       }
       
       // Handle spin - pick ONE random winner (API KEY REQUIRED)
       if (action === 'spin') {
-        // Check if API key is provided
         if (!apikey) {
           return res.status(401).json({
             status: false,
             error: "API key is required to spin",
-            message: "Please provide apikey= to spin the raffle.",
             usage: "/spin?action=spin&apikey="
           });
         }
         
-        // Validate API key
         if (apikey !== ADMIN_API_KEY) {
           return res.status(403).json({
             status: false,
-            error: "Invalid API key",
-            message: "The provided API key is not valid."
+            error: "Invalid API key"
           });
         }
         
@@ -258,155 +263,178 @@ module.exports = {
         if (entries.length === 0) {
           return res.status(400).json({
             status: false,
-            error: "No participants found. Please ask people to join first.",
-            instruction: "Use: /spin?action=join&name=YourName&gcashnumber=09916527333&gcashname=YourGCashName"
+            error: "No participants found. Please ask people to join first."
           });
         }
         
-        // Check if spin already done today
         const spinHistory = loadSpinHistory();
-        if (spinHistory.last_winner && spinHistory.last_winner.date === new Date().toISOString().split('T')[0]) {
-          const winner = spinHistory.last_winner.winner;
+        const currentWinners = spinHistory.winners.length;
+        
+        // Check if all 4 winners have been selected
+        if (currentWinners >= TOTAL_WINNERS) {
           return res.json({
             status: false,
-            error: "Spin already done today!",
-            message: "The winner has already been selected for today.",
-            winner: {
-              name: winner.name,
-              gcash_number: maskPhoneNumber(winner.gcashnumber),
-              gcash_name: maskGcashName(winner.gcashname),
-              prize: "₱50 GCash"
-            }
+            error: "All 4 winners have already been selected!",
+            message: `🎉 ${TOTAL_WINNERS} winners have already won ₱${PRIZE_PER_WINNER} each! Total ₱${TOTAL_PRIZE} awarded.`,
+            winners: spinHistory.winners.map((w, index) => ({
+              spin_number: index + 1,
+              name: w.name,
+              prize: w.prize
+            }))
           });
         }
         
-        // Randomly select ONE winner
-        const randomIndex = Math.floor(Math.random() * entries.length);
-        const winner = entries[randomIndex];
-        const winnerNumber = randomIndex + 1;
+        // Get remaining participants (not yet winners)
+        const winnerIds = new Set(spinHistory.winners.map(w => w.id));
+        const remainingParticipants = entries.filter(entry => !winnerIds.has(entry.id));
         
-        // Generate spin animation result
+        if (remainingParticipants.length === 0) {
+          return res.status(400).json({
+            status: false,
+            error: "No remaining participants. All participants have already won!"
+          });
+        }
+        
+        // Randomly select ONE winner from remaining participants
+        const randomIndex = Math.floor(Math.random() * remainingParticipants.length);
+        const winner = remainingParticipants[randomIndex];
+        const winnerNumber = entries.findIndex(e => e.id === winner.id) + 1;
+        const spinNumber = currentWinners + 1;
+        
+        // Create spin result
         const spinResult = {
           spinId: generateId(),
+          spin_number: spinNumber,
           winner: winner,
           winner_number: winnerNumber,
+          prize: `₱${PRIZE_PER_WINNER} GCash`,
+          amount: PRIZE_PER_WINNER,
           total_participants: entries.length,
+          remaining_participants: remainingParticipants.length - 1,
           timestamp: new Date().toISOString(),
           date: new Date().toISOString().split('T')[0]
         };
         
         // Save to spin history
         spinHistory.spins.unshift(spinResult);
-        spinHistory.last_winner = spinResult;
-        if (spinHistory.winners) {
-          spinHistory.winners.unshift({
-            name: winner.name,
-            gcash_number: winner.gcashnumber,
-            gcash_name: winner.gcashname,
-            prize: "₱50 GCash",
-            amount: 50,
-            date: spinResult.timestamp,
-            entry_number: winnerNumber
-          });
-        } else {
-          spinHistory.winners = [{
-            name: winner.name,
-            gcash_number: winner.gcashnumber,
-            gcash_name: winner.gcashname,
-            prize: "₱50 GCash",
-            amount: 50,
-            date: spinResult.timestamp,
-            entry_number: winnerNumber
-          }];
-        }
+        spinHistory.winners.push({
+          id: winner.id,
+          name: winner.name,
+          gcash_number: winner.gcashnumber,
+          gcash_name: winner.gcashname,
+          prize: `₱${PRIZE_PER_WINNER} GCash`,
+          amount: PRIZE_PER_WINNER,
+          spin_number: spinNumber,
+          date: spinResult.timestamp,
+          entry_number: winnerNumber
+        });
+        spinHistory.last_spin_index = spinNumber;
         
         saveSpinHistory(spinHistory);
         
         // Visual wheel animation
         const wheelVisual = `
-╔════════════════════════════════════════╗
-║                                        ║
-║           🎰 SPINNING... 🎰            ║
-║                                        ║
-║     ┌─────────────────────────┐        ║
-║     │                         │        ║
-║     │    🏆 WINNER FOUND! 🏆   │        ║
-║     │                         │        ║
-║     └─────────────────────────┘        ║
-║                    ▼                    ║
-║                                        ║
-║   ╔═══════════════════════════════╗    ║
-║   ║                               ║    ║
+╔════════════════════════════════════════════╗
+║                                            ║
+║           🎰 SPIN #${spinNumber} OF ${TOTAL_WINNERS} 🎰           ║
+║                                            ║
+║     ┌─────────────────────────────┐        ║
+║     │                             │        ║
+║     │    🏆 WINNER FOUND! 🏆       │        ║
+║     │                             │        ║
+║     └─────────────────────────────┘        ║
+║                    ▼                        ║
+║                                            ║
+║   ╔═══════════════════════════════════╗    ║
+║   ║                                   ║    ║
 ║   ║      ${winner.name.toUpperCase().padEnd(20)}      ║    ║
-║   ║                               ║    ║
-║   ║      WINS ₱50 GCASH!          ║    ║
-║   ║                               ║    ║
-║   ╚═══════════════════════════════╝    ║
-║                                        ║
-╚════════════════════════════════════════╝
+║   ║                                   ║    ║
+║   ║      WINS ₱${PRIZE_PER_WINNER} GCASH!        ║    ║
+║   ║                                   ║    ║
+║   ╚═══════════════════════════════════╝    ║
+║                                            ║
+║   🎊 ${spinNumber} of ${TOTAL_WINNERS} Winners Selected 🎊       ║
+║                                            ║
+╚════════════════════════════════════════════╝
         `;
         
         return res.json({
           status: true,
           success: true,
-          message: `🎉🎊 CONGRATULATIONS ${winner.name}! 🎊🎉\nYou won ₱50 GCash! 💰`,
-          spin: {
-            spin_id: spinResult.spinId,
-            winner_name: winner.name,
-            winner_gcash: winner.gcashnumber,
-            winner_gcash_name: winner.gcashname,
+          spin_number: spinNumber,
+          total_spins: TOTAL_WINNERS,
+          message: `🎉🎊 SPIN #${spinNumber} - CONGRATULATIONS ${winner.name}! 🎊🎉\nYou won ₱${PRIZE_PER_WINNER} GCash! 💰`,
+          winner: {
+            spin_number: spinNumber,
+            name: winner.name,
+            gcash_number: winner.gcashnumber,
+            gcash_name: winner.gcashname,
             entry_number: winnerNumber,
-            prize: "₱50 GCash",
-            total_participants: entries.length
+            prize: `₱${PRIZE_PER_WINNER} GCash`
           },
+          remaining_spins: TOTAL_WINNERS - spinNumber,
+          remaining_participants: remainingParticipants.length - 1,
           visual: wheelVisual,
           timestamp: spinResult.timestamp
         });
       }
       
-      // Handle winner check (no API key required for public view)
-      if (action === 'winner') {
+      // Handle winners list
+      if (action === 'winners') {
         const spinHistory = loadSpinHistory();
         
-        if (!spinHistory.last_winner) {
+        if (spinHistory.winners.length === 0) {
           return res.json({
             status: true,
-            message: "No spin has been done yet. Use /spin?action=spin&apikey=selovasx2024 to pick a winner!"
+            message: "No winners yet. Use /spin?action=spin&apikey=selovasx2024 to start spinning!",
+            total_winners: 0,
+            expected_winners: TOTAL_WINNERS,
+            prize_per_winner: `₱${PRIZE_PER_WINNER}`,
+            total_prize: `₱${TOTAL_PRIZE}`
           });
         }
         
-        const winner = spinHistory.last_winner.winner;
+        const winnersList = spinHistory.winners.map((w, index) => ({
+          spin_number: w.spin_number,
+          name: w.name,
+          gcash_number: isAdmin ? w.gcash_number : maskPhoneNumber(w.gcash_number),
+          gcash_name: isAdmin ? w.gcash_name : maskGcashName(w.gcash_name),
+          prize: w.prize,
+          date: w.date
+        }));
         
         return res.json({
           status: true,
-          winner: {
-            name: winner.name,
-            gcash_number: isAdmin ? winner.gcashnumber : maskPhoneNumber(winner.gcashnumber),
-            gcash_name: isAdmin ? winner.gcashname : maskGcashName(winner.gcashname),
-            prize: "₱50 GCash",
-            entry_number: spinHistory.last_winner.winner_number
-          },
-          date: spinHistory.last_winner.date,
-          total_participants: spinHistory.last_winner.total_participants,
+          total_winners: spinHistory.winners.length,
+          expected_winners: TOTAL_WINNERS,
+          prize_per_winner: `₱${PRIZE_PER_WINNER}`,
+          total_prize_awarded: `₱${spinHistory.winners.length * PRIZE_PER_WINNER}`,
+          remaining_prize: `₱${(TOTAL_WINNERS - spinHistory.winners.length) * PRIZE_PER_WINNER}`,
+          winners: winnersList,
           is_admin: isAdmin
         });
       }
       
-      // Default response - show available actions
+      // Default response
       res.json({
         status: true,
-        message: "🎰 RAFFLE SPIN SYSTEM 🎰",
+        message: "🎰 4 WINNERS RAFFLE SPIN SYSTEM 🎰",
+        description: `4 winners will be selected. Each wins ₱${PRIZE_PER_WINNER} GCash! Total ₱${TOTAL_PRIZE}!`,
         available_actions: {
           join: "/spin?action=join&name=YourName&gcashnumber=09916527333&gcashname=YourGCashName",
-          list_public: "/spin?action=list",
+          list: "/spin?action=list",
           list_admin: "/spin?action=list&apikey=",
-          spin: "/spin?action=spin&apikey=",
-          winner: "/spin?action=winner",
-          winner_admin: "/spin?action=winner&apikey=",
+          spin: "/spin?action=spin&apikey= (spin one by one)",
+          winners: "/spin?action=winners",
+          winners_admin: "/spin?action=winners&apikey=",
           reset: "/spin?action=reset&reset=true&apikey="
         },
         current_participants: loadEntries().length,
-        note: "API key required for spin action. Use apikey=selovasx2024"
+        current_winners: loadSpinHistory().winners.length,
+        total_winners: TOTAL_WINNERS,
+        prize_per_winner: `₱${PRIZE_PER_WINNER}`,
+        total_prize: `₱${TOTAL_PRIZE}`,
+        note: "Spin 4 times to select 4 different winners! Each spin requires API key."
       });
       
     } catch (error) {
