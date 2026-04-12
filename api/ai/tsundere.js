@@ -32,8 +32,8 @@ module.exports = {
       // Generate TTS audio
       const audioBuffer = await generateTsundereTTS(text, voice, language, parseFloat(speed), parseFloat(pitch));
       
-      // Upload to catbox.moe
-      const audioUrl = await uploadToCatbox(audioBuffer, `tsundere-${Date.now()}.mp3`);
+      // Upload to alternative service (multiple fallbacks)
+      const audioUrl = await uploadToService(audioBuffer, `tsundere-${Date.now()}.mp3`);
       
       console.log(`✅ Audio URL: ${audioUrl}`);
       
@@ -115,28 +115,66 @@ async function generateTsundereTTS(text, voice, language, speed, pitch) {
   }
 }
 
-async function uploadToCatbox(buffer, filename) {
+// Multiple upload services with fallbacks
+async function uploadToService(buffer, filename) {
+  // Service 1: 0x0.st (working alternative)
   try {
     const formData = new FormData();
-    formData.append('reqtype', 'fileupload');
-    formData.append('fileToUpload', buffer, { filename: filename });
+    formData.append('file', buffer, { filename: filename });
     
-    const response = await axios.post('https://catbox.moe/user/api.php', formData, {
+    const response = await axios.post('https://0x0.st', formData, {
       headers: formData.getHeaders(),
       timeout: 30000
     });
     
     const url = response.data.trim();
-    
     if (url && url.startsWith('http')) {
-      console.log(`✅ Uploaded to catbox: ${url}`);
+      console.log(`✅ Uploaded to 0x0.st: ${url}`);
       return url;
     }
-    
-    throw new Error("Upload failed: " + url);
-    
   } catch (error) {
-    console.error("Upload Error:", error.message);
-    throw new Error("Failed to upload audio to catbox.moe");
+    console.log("0x0.st upload failed, trying next...");
   }
+  
+  // Service 2: tmp.ninja
+  try {
+    const formData = new FormData();
+    formData.append('file', buffer, { filename: filename });
+    
+    const response = await axios.post('https://tmp.ninja/api.php', formData, {
+      headers: formData.getHeaders(),
+      timeout: 30000
+    });
+    
+    if (response.data && response.data.url) {
+      console.log(`✅ Uploaded to tmp.ninja: ${response.data.url}`);
+      return response.data.url;
+    }
+  } catch (error) {
+    console.log("tmp.ninja upload failed, trying next...");
+  }
+  
+  // Service 3: gofile.io
+  try {
+    const formData = new FormData();
+    formData.append('file', buffer, { filename: filename });
+    
+    const response = await axios.post('https://store1.gofile.io/uploadFile', formData, {
+      headers: formData.getHeaders(),
+      timeout: 30000
+    });
+    
+    if (response.data && response.data.data && response.data.data.downloadPage) {
+      console.log(`✅ Uploaded to gofile: ${response.data.data.downloadPage}`);
+      return response.data.data.downloadPage;
+    }
+  } catch (error) {
+    console.log("gofile upload failed, trying next...");
+  }
+  
+  // Service 4: Return base64 as fallback (always works)
+  const base64Data = buffer.toString('base64');
+  const dataUrl = `data:audio/mpeg;base64,${base64Data}`;
+  console.log("Using base64 fallback");
+  return dataUrl;
 }
