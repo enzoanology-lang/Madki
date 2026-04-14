@@ -23,7 +23,7 @@ module.exports = {
           success: false,
           author: "Jaybohol",
           message: "Parameter 'text' wajib diisi.",
-          usage: "/api/ai/tsundere?text=Hello%20World"
+          usage: "/api/ai/tsundere?text=Hello%20Kalibutan"
         });
       }
       
@@ -32,8 +32,8 @@ module.exports = {
       // Generate TTS audio
       const audioBuffer = await generateTsundereTTS(text, voice, language, parseFloat(speed), parseFloat(pitch));
       
-      // Upload to alternative service (multiple fallbacks)
-      const audioUrl = await uploadToService(audioBuffer, `tsundere-${Date.now()}.mp3`);
+      // Upload to Uguu.se (working)
+      const audioUrl = await uploadToUguu(audioBuffer, `tsundere-${Date.now()}.mp3`);
       
       console.log(`✅ Audio URL: ${audioUrl}`);
       
@@ -49,11 +49,27 @@ module.exports = {
     } catch (error) {
       console.error("Tsundere TTS Error:", error.message);
       
-      res.status(500).json({
-        success: false,
-        author: "Jaybohol",
-        message: error.message || "Failed to generate Tsundere TTS"
-      });
+      // Fallback: Return base64 if upload fails
+      try {
+        const audioBuffer = await generateTsundereTTS(text, voice, language, parseFloat(speed), parseFloat(pitch));
+        const base64Audio = audioBuffer.toString('base64');
+        
+        res.json({
+          success: true,
+          author: "Jaybohol",
+          result: {
+            text: text,
+            audio: `data:audio/mpeg;base64,${base64Audio}`,
+            note: "Base64 audio (upload service unavailable)"
+          }
+        });
+      } catch (fallbackError) {
+        res.status(500).json({
+          success: false,
+          author: "Jaybohol",
+          message: error.message || "Failed to generate Tsundere TTS"
+        });
+      }
     }
   }
 };
@@ -115,66 +131,45 @@ async function generateTsundereTTS(text, voice, language, speed, pitch) {
   }
 }
 
-// Multiple upload services with fallbacks
-async function uploadToService(buffer, filename) {
-  // Service 1: 0x0.st (working alternative)
+// ============= UGUU.SE UPLOAD (WORKING) =============
+
+async function uploadToUguu(buffer, filename) {
   try {
     const formData = new FormData();
-    formData.append('file', buffer, { filename: filename });
+    formData.append('files[]', buffer, { filename: filename });
     
-    const response = await axios.post('https://0x0.st', formData, {
-      headers: formData.getHeaders(),
+    const response = await axios.post('https://uguu.se/upload', formData, {
+      headers: {
+        ...formData.getHeaders(),
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+      },
       timeout: 30000
     });
     
-    const url = response.data.trim();
+    // Uguu returns different formats
+    let url = null;
+    
+    if (typeof response.data === 'string') {
+      // Text response
+      if (response.data.startsWith('http')) {
+        url = response.data.trim();
+      }
+    } else if (response.data && response.data.files && response.data.files[0]) {
+      // JSON response
+      url = response.data.files[0].url;
+    } else if (response.data && response.data.url) {
+      url = response.data.url;
+    }
+    
     if (url && url.startsWith('http')) {
-      console.log(`✅ Uploaded to 0x0.st: ${url}`);
+      console.log(`✅ Uploaded to Uguu.se: ${url}`);
       return url;
     }
+    
+    throw new Error("Uguu upload failed: Invalid response");
+    
   } catch (error) {
-    console.log("0x0.st upload failed, trying next...");
+    console.error("Uguu Upload Error:", error.message);
+    throw new Error("Failed to upload audio");
   }
-  
-  // Service 2: tmp.ninja
-  try {
-    const formData = new FormData();
-    formData.append('file', buffer, { filename: filename });
-    
-    const response = await axios.post('https://tmp.ninja/api.php', formData, {
-      headers: formData.getHeaders(),
-      timeout: 30000
-    });
-    
-    if (response.data && response.data.url) {
-      console.log(`✅ Uploaded to tmp.ninja: ${response.data.url}`);
-      return response.data.url;
-    }
-  } catch (error) {
-    console.log("tmp.ninja upload failed, trying next...");
-  }
-  
-  // Service 3: gofile.io
-  try {
-    const formData = new FormData();
-    formData.append('file', buffer, { filename: filename });
-    
-    const response = await axios.post('https://store1.gofile.io/uploadFile', formData, {
-      headers: formData.getHeaders(),
-      timeout: 30000
-    });
-    
-    if (response.data && response.data.data && response.data.data.downloadPage) {
-      console.log(`✅ Uploaded to gofile: ${response.data.data.downloadPage}`);
-      return response.data.data.downloadPage;
-    }
-  } catch (error) {
-    console.log("gofile upload failed, trying next...");
-  }
-  
-  // Service 4: Return base64 as fallback (always works)
-  const base64Data = buffer.toString('base64');
-  const dataUrl = `data:audio/mpeg;base64,${base64Data}`;
-  console.log("Using base64 fallback");
-  return dataUrl;
 }
